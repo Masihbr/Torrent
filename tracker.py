@@ -1,40 +1,60 @@
 import asyncio
 import sys
-from utils import split_addr
+import logging
+from collections import defaultdict
+from utils import split_addr, serialize, deserialize
+from log import configure_logging
+
+configure_logging('tracker.log')
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+logger.propagate = False
 
 ARG_LEN = 2
 
-class CounterUDPServer:
-    def __init__(self):
-        self.counter = 0
 
-    async def send_counter(self, addr):
-        self.counter += 1
-        next_value = self.counter
-        await asyncio.sleep(0.5)
-        print(f"sending {next_value} to {addr}")
-        self.transport.sendto(str(next_value).encode(), addr)
+class TrackerUDPServer(asyncio.DatagramProtocol):
+    def __init__(self):
+        self.files = defaultdict(list)
+        self.peers = defaultdict(set)
 
     def connection_made(self, transport):
         self.transport = transport
 
     def datagram_received(self, data, addr):
-        print(f"got {data.decode()} from {addr}")
-        if data.decode().strip() != "get":
-            return
-        loop = asyncio.get_event_loop()
-        loop.create_task(self.send_counter(addr))
+        message = deserialize(data)
+        logger.info(f"got {message} from {addr}")
+        if message["type"] == "share":
+            filename, peer_id, peer_ip, peer_port = message["filename"], message[
+                "peer_id"], message["peer_ip"], message["peer_port"]
+            self.files[filename].append({
+                "peer_id": peer_id,
+                "peer_ip": peer_ip,
+                "peer_port": peer_port
+            })
+            self.peers[peer_id].add(filename)
+            logger.info(f"{peer_id} shared {filename}")
+            logger.info(f"files:{self.files}\npeers:{self.peers}")
+            self.transport.sendto(serialize({"status": "ok"}), addr)
+        elif message.strip().startswith("get"):
+            self.transport.sendto(serialize({"status": "bad"}), addr)
+
+    def connection_lost(self, exc) -> None:
+        logger.error(f"Connection lost {exc}")
 
 
 async def run_server(ip: str, port: str):
     loop = asyncio.get_running_loop()
-    await loop.create_datagram_endpoint(
-        lambda: CounterUDPServer(),
+    transport, protocol = await loop.create_datagram_endpoint(
+        lambda: TrackerUDPServer(),
         local_addr=(ip, port)
     )
-    print(f"Listening on 127.0.0.1:{port}")
-    while True:
-        await asyncio.sleep(3600)
+    logger.info(f"Listening on {ip}:{port}")
+
+    try:
+        await asyncio.sleep(3600)  # Serve for 1 hour.
+    finally:
+        transport.close()
 
 
 if __name__ == "__main__":
