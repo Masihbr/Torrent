@@ -1,6 +1,8 @@
 import asyncio
 import sys
 import logging
+import random
+import time
 from utils import split_addr, serialize, deserialize
 from uuid import uuid4
 
@@ -58,6 +60,7 @@ class PeerGetProtocol(asyncio.DatagramProtocol):
         self.filename = filename
         self.peer_ip = peer_ip
         self.peer_port = peer_port
+        self.chosen_peer = None
         self.on_con_lost = on_con_lost
         self.transport = None
 
@@ -77,7 +80,8 @@ class PeerGetProtocol(asyncio.DatagramProtocol):
         response = deserialize(data)
         logger.info(f"Received {response} from {addr}")
         if response["status"] == "ok":
-            logger.info(f"Got {response} successfully")
+            peer = random.choice(response["peers"])
+            self.chosen_peer = peer
         else:
             logger.error(response)
         logger.info("Close the socket")
@@ -91,17 +95,32 @@ class PeerGetProtocol(asyncio.DatagramProtocol):
         self.on_con_lost.set_result(True)
 
 
+async def download_file(peer: dict, filename: str) -> None:
+    reader, writer = await asyncio.open_connection(host=peer["peer_ip"], port=peer["peer_port"])
+    payload = serialize({"filename": filename})
+    logger.info(f"Send payload {payload}")
+    writer.write(payload)
+    file_response = deserialize(await reader.read(1024))
+    logger.info(f"file_response: {file_response}")
+    if file_response["status"] == "ok":
+        with open(f"{int(time.time())}_{filename}", "wb") as file:
+            file.write(file_response["contents"])
+    else:
+        logger.error(f"file not found.")
+    writer.close()
+    await writer.wait_closed()
+
+
 async def handle_file_share(reader, writer):
     logger.info(f"\n---\n{peer_id} server started.\n---\n")
     try:
         while True:
             data = await reader.read(1024)
+            logger.info(f"received payload {data}")
             message = deserialize(data)
             peer_name = writer.get_extra_info('peername')
             logger.info(
                 f'Client connected from {peer_name[0]}:{peer_name[1]} message:{message}')
-            logger.info(f"Send: {message}")
-            writer.write(data)
             await writer.drain()
             try:
                 with open(message["filename"], 'rb') as f:
@@ -143,6 +162,9 @@ async def get_file(filename, tracker_ip, tracker_port, peer_ip, peer_port):
     try:
         await on_con_lost
     finally:
+        peer = file_protocol.chosen_peer
+        if peer:
+            await download_file(peer, filename)
         transport.close()
     logger.info(f"{peer_id} got {filename}")
 
