@@ -34,9 +34,25 @@ class TrackerUDPServer(asyncio.DatagramProtocol):
             })
             self.peers[peer_id].add(filename)
             logger.info(f"{peer_id} shared {filename}")
-            logger.info(f"\n---\nfiles:{self.files}\npeers:{self.peers}\n---\n")
+            logger.info(
+                f"\n---\nfiles:{self.files}\npeers:{self.peers}\n---\n")
             self.transport.sendto(serialize({"status": "ok"}), addr)
-        elif message.strip().startswith("get"):
+        elif message["type"] == "get":
+            filename, peer_id, peer_ip, peer_port = message["filename"], message[
+                "peer_id"], message["peer_ip"], message["peer_port"]
+            peers = self.files.get(filename)
+            if peers:
+                response = serialize({"status": "ok",
+                                      "filename": filename,
+                                      "n": len(peers),
+                                      "peers": peers})
+                self.transport.sendto(response, addr=addr)
+                logging.info(f"{peer_id} requested {filename}, sent to {addr}")
+            else:
+                self.transport.sendto(
+                    serialize({"status": "bad", "message": "file not found."}))
+                logging.error(
+                    f"{peer_id} requested {filename}, but file not found")
             self.transport.sendto(serialize({"status": "bad"}), addr)
 
     def connection_lost(self, exc) -> None:

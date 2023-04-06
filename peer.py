@@ -15,6 +15,7 @@ peer_id = None
 READ_SIZE = 1024
 ARG_LEN = 5
 
+
 class PeerShareProtocol(asyncio.DatagramProtocol):
     def __init__(self, filename, peer_ip, peer_port, on_con_lost):
         self.filename = filename
@@ -48,6 +49,48 @@ class PeerShareProtocol(asyncio.DatagramProtocol):
     def error_received(self, exc):
         logger.error(f"Error received {exc}")
 
+    def connection_lost(self, exc):
+        logger.info('The server closed the connection')
+        self.on_con_lost.set_result(True)
+
+
+class PeerGetProtocol(asyncio.DatagramProtocol):
+    def __init__(self, filename, peer_ip, peer_port, on_con_lost):
+        self.filename = filename
+        self.peer_ip = peer_ip
+        self.peer_port = peer_port
+        self.on_con_lost = on_con_lost
+        self.transport = None
+
+    def connection_made(self, transport):
+        self.transport = transport
+        message = {
+            "filename": self.filename,
+            "type": "get",
+            "peer_id": f"{peer_id}",
+            "peer_ip": f"{self.peer_ip}",
+            "peer_port": f"{self.peer_port}"
+        }
+        logger.info(f"Send {message}")
+        self.transport.sendto(serialize(message))
+
+    def datagram_received(self, data, addr):
+        response = deserialize(data)
+        logger.info(f"Received {response} from {addr}")
+        if response["status"] == "ok":
+            logger.info(f"Got {response} successfully")
+        else:
+            logger.error(response)
+        logger.info("Close the socket")
+        self.transport.close()
+
+    def error_received(self, exc):
+        logger.error(f"Error received {exc}")
+
+    def connection_lost(self, exc):
+        logger.info('The server closed the connection')
+        self.on_con_lost.set_result(True)
+
 
 async def handle_file_share(reader, writer):
     logger.info(f"\n---\n{peer_id} server started.\n---\n")
@@ -65,6 +108,7 @@ async def handle_file_share(reader, writer):
         writer.close()
         await writer.wait_closed()
 
+
 async def notify_tracker(filename, tracker_ip, tracker_port, peer_ip, peer_port):
     on_con_lost = asyncio.get_running_loop().create_future()
     transport, file_protocol = await asyncio.get_running_loop().create_datagram_endpoint(
@@ -78,10 +122,11 @@ async def notify_tracker(filename, tracker_ip, tracker_port, peer_ip, peer_port)
         transport.close()
     logger.info(f"{peer_id} shared {filename}")
 
+
 async def get_file(filename, tracker_ip, tracker_port, peer_ip, peer_port):
     on_con_lost = asyncio.get_running_loop().create_future()
     transport, file_protocol = await asyncio.get_running_loop().create_datagram_endpoint(
-        lambda: PeerShareProtocol(
+        lambda: PeerGetProtocol(
             filename, peer_ip, peer_port, on_con_lost=on_con_lost),
         remote_addr=(tracker_ip, tracker_port)
     )
@@ -89,20 +134,22 @@ async def get_file(filename, tracker_ip, tracker_port, peer_ip, peer_port):
         await on_con_lost
     finally:
         transport.close()
-    logger.info(f"{peer_id} shared {filename}")
+    logger.info(f"{peer_id} got {filename}")
+
 
 async def share_file(filename, tracker_ip, tracker_port, peer_ip, peer_port):
     server = await asyncio.start_server(handle_file_share, host=peer_ip, port=peer_port)
     async with server:
         await notify_tracker(filename, tracker_ip, tracker_port, peer_ip, peer_port)
-  
+        await server.serve_forever()
+
 
 async def run_client(mode, filename, tracker_ip, tracker_port, listen_ip, listen_port):
     if mode == "share":
         await share_file(filename=filename, tracker_ip=tracker_ip, tracker_port=tracker_port, peer_ip=listen_ip, peer_port=listen_port)
     elif mode == "get":
         await get_file(filename=filename, tracker_ip=tracker_ip, tracker_port=tracker_port, peer_ip=listen_ip, peer_port=listen_port)
-        
+
 
 if __name__ == "__main__":
     if len(sys.argv) != ARG_LEN:
