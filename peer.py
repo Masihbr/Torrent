@@ -2,8 +2,7 @@ import asyncio
 import sys
 import logging
 import random
-import time
-from utils import split_addr, serialize, deserialize
+from utils import *
 from uuid import uuid4
 
 from log import configure_logging
@@ -205,13 +204,17 @@ def tail(file_path, n):
         lines = f.read().splitlines()
     return "\n".join(lines[-n:])
 
+
 async def get_input():
     return await asyncio.get_event_loop().run_in_executor(None, input, "> ")
+
 
 async def run_terminal():
     while True:
         command = await get_input()
         command_args = list(map(str.lower, command.split()))
+        if len(command_args) < 1:
+            continue
         if command_args[0] == "tail":
             try:
                 n = int(command_args[1])
@@ -223,6 +226,7 @@ async def run_terminal():
             return
         else:
             pass
+
 
 async def main():
     await asyncio.gather(run_peer(), run_terminal())

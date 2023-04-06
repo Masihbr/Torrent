@@ -2,7 +2,7 @@ import asyncio
 import sys
 import logging
 from collections import defaultdict
-from utils import split_addr, serialize, deserialize
+from utils import *
 from log import configure_logging
 
 configure_logging('tracker.log')
@@ -66,15 +66,40 @@ async def run_server(ip: str, port: str):
         local_addr=(ip, port)
     )
     logger.info(f"Listening on {ip}:{port}")
-
     try:
-        await asyncio.sleep(3600)  # Serve for 1 hour.
+        await run_terminal(protocol)  # run until quit
     finally:
         transport.close()
 
 
-if __name__ == "__main__":
+async def run_tracker():
     if len(sys.argv) != ARG_LEN:
         raise ValueError("Error in arguments.")
     ip, port = split_addr(addr=sys.argv[1])
-    asyncio.run(run_server(ip, port))
+    await run_server(ip, port)
+
+
+async def run_terminal(protocol):
+    while True:
+        command = await get_input()
+        command_args = list(map(str.lower, command.split()))
+        if len(command_args) < 1:
+            continue
+        if command_args[0] == "tail":
+            try:
+                n = int(command_args[1])
+            except:
+                n = 50
+            print(tail(file_path="tracker.log", n=n))
+        if command_args[0] == "file_logs":
+            if command_args[1] == "-all":
+                print(protocol.files)
+            else:
+                print(protocol.files[command_args[1]])
+        elif command_args[0] == "quit":
+            return
+        else:
+            pass
+
+if __name__ == "__main__":
+    asyncio.run(run_tracker())

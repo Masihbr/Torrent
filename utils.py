@@ -1,7 +1,7 @@
 import ipaddress
 import json
 from typing import Tuple
-
+import asyncio
 
 def validate_addr(ip: str, port: str) -> None:
     ipaddress.ip_address(ip)
@@ -38,3 +38,13 @@ def serialize(data: dict) -> bytes:
 
 def deserialize(data: bytes) -> dict:
     return json.loads(data.decode(), cls=BinaryJSONDecoder)
+
+
+def tail(file_path, n):
+    with open(file_path, "r") as f:
+        lines = f.read().splitlines()
+    return "\n".join(lines[-n:])
+
+
+async def get_input():
+    return await asyncio.get_event_loop().run_in_executor(None, input, "> ")
