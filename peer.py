@@ -104,7 +104,7 @@ async def handle_file_share(reader, writer):
             writer.write(data)
             await writer.drain()
             try:
-                with open(message["filename"], 'r') as f:
+                with open(message["filename"], 'rb') as f:
                     contents = f.read()
                     writer.write(
                         serialize({"status": "ok", "contents": contents}))
