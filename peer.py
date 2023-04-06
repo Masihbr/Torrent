@@ -12,7 +12,6 @@ logger.setLevel(logging.DEBUG)
 logger.propagate = False
 
 peer_id = None
-READ_SIZE = 1024
 ARG_LEN = 5
 
 
@@ -96,15 +95,26 @@ async def handle_file_share(reader, writer):
     logger.info(f"\n---\n{peer_id} server started.\n---\n")
     try:
         while True:
-            data = await reader.read(READ_SIZE)
-            message = data.decode()
-            addr = writer.get_extra_info('peername')
-            logger.info(f"Received {message!r} from {addr!r}")
-            logger.info(f"Send: {message!r}")
+            data = await reader.read(1024)
+            message = deserialize(data)
+            peer_name = writer.get_extra_info('peername')
+            logger.info(
+                f'Client connected from {peer_name[0]}:{peer_name[1]} message:{message}')
+            logger.info(f"Send: {message}")
             writer.write(data)
             await writer.drain()
-    except:
-        logger.info("Close the connection")
+            try:
+                with open(message["filename"], 'r') as f:
+                    contents = f.read()
+                    writer.write(
+                        serialize({"status": "ok", "contents": contents}))
+                    await writer.drain()
+            except FileNotFoundError:
+                writer.write(
+                    serialize({"status": "bad", "message": "file not found."}))
+                await writer.drain()
+    except Exception as e:
+        logger.error(f"Close the connection {e}")
         writer.close()
         await writer.wait_closed()
 
