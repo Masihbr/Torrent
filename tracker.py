@@ -34,7 +34,7 @@ class TrackerUDPServer(asyncio.DatagramProtocol):
             })
             self.peers[peer_id].add(filename)
             logger.info(f"{peer_id} shared {filename}")
-            logger.info(f"files:{self.files}\npeers:{self.peers}")
+            logger.info(f"\n---\nfiles:{self.files}\npeers:{self.peers}\n---\n")
             self.transport.sendto(serialize({"status": "ok"}), addr)
         elif message.strip().startswith("get"):
             self.transport.sendto(serialize({"status": "bad"}), addr)

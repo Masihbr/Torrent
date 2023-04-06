@@ -12,7 +12,7 @@ logger.setLevel(logging.DEBUG)
 logger.propagate = False
 
 peer_id = None
-
+READ_SIZE = 1024
 ARG_LEN = 5
 
 class PeerShareProtocol(asyncio.DatagramProtocol):
@@ -49,7 +49,23 @@ class PeerShareProtocol(asyncio.DatagramProtocol):
         logger.error(f"Error received {exc}")
 
 
-async def share_file(filename, tracker_ip, tracker_port, peer_ip, peer_port):
+async def handle_file_share(reader, writer):
+    logger.info(f"\n---\n{peer_id} server started.\n---\n")
+    try:
+        while True:
+            data = await reader.read(READ_SIZE)
+            message = data.decode()
+            addr = writer.get_extra_info('peername')
+            logger.info(f"Received {message!r} from {addr!r}")
+            logger.info(f"Send: {message!r}")
+            writer.write(data)
+            await writer.drain()
+    except:
+        logger.info("Close the connection")
+        writer.close()
+        await writer.wait_closed()
+
+async def notify_tracker(filename, tracker_ip, tracker_port, peer_ip, peer_port):
     on_con_lost = asyncio.get_running_loop().create_future()
     transport, file_protocol = await asyncio.get_running_loop().create_datagram_endpoint(
         lambda: PeerShareProtocol(
@@ -62,12 +78,31 @@ async def share_file(filename, tracker_ip, tracker_port, peer_ip, peer_port):
         transport.close()
     logger.info(f"{peer_id} shared {filename}")
 
+async def get_file(filename, tracker_ip, tracker_port, peer_ip, peer_port):
+    on_con_lost = asyncio.get_running_loop().create_future()
+    transport, file_protocol = await asyncio.get_running_loop().create_datagram_endpoint(
+        lambda: PeerShareProtocol(
+            filename, peer_ip, peer_port, on_con_lost=on_con_lost),
+        remote_addr=(tracker_ip, tracker_port)
+    )
+    try:
+        await on_con_lost
+    finally:
+        transport.close()
+    logger.info(f"{peer_id} shared {filename}")
+
+async def share_file(filename, tracker_ip, tracker_port, peer_ip, peer_port):
+    server = await asyncio.start_server(handle_file_share, host=peer_ip, port=peer_port)
+    async with server:
+        await notify_tracker(filename, tracker_ip, tracker_port, peer_ip, peer_port)
+  
 
 async def run_client(mode, filename, tracker_ip, tracker_port, listen_ip, listen_port):
     if mode == "share":
         await share_file(filename=filename, tracker_ip=tracker_ip, tracker_port=tracker_port, peer_ip=listen_ip, peer_port=listen_port)
-    else:
-        pass
+    elif mode == "get":
+        await get_file(filename=filename, tracker_ip=tracker_ip, tracker_port=tracker_port, peer_ip=listen_ip, peer_port=listen_port)
+        
 
 if __name__ == "__main__":
     if len(sys.argv) != ARG_LEN:
