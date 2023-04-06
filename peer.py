@@ -103,7 +103,7 @@ async def download_file(peer: dict, filename: str) -> None:
     file_response = deserialize(await reader.read(1024))
     logger.info(f"file_response: {file_response}")
     if file_response["status"] == "ok":
-        with open(f"{int(time.time())}_{filename}", "wb") as file:
+        with open(f"{filename}", "wb") as file:
             file.write(file_response["contents"])
     else:
         logger.error(f"file not found.")
@@ -181,9 +181,10 @@ async def run_client(mode, filename, tracker_ip, tracker_port, listen_ip, listen
         await share_file(filename=filename, tracker_ip=tracker_ip, tracker_port=tracker_port, peer_ip=listen_ip, peer_port=listen_port)
     elif mode == "get":
         await get_file(filename=filename, tracker_ip=tracker_ip, tracker_port=tracker_port, peer_ip=listen_ip, peer_port=listen_port)
+        await share_file(filename=filename, tracker_ip=tracker_ip, tracker_port=tracker_port, peer_ip=listen_ip, peer_port=listen_port)
 
 
-if __name__ == "__main__":
+async def run_peer():
     if len(sys.argv) != ARG_LEN:
         raise ValueError("Error in arguments.")
     mode = sys.argv[1].lower()
@@ -193,6 +194,38 @@ if __name__ == "__main__":
     filename = sys.argv[2]
     tracker_ip, tracker_port = split_addr(sys.argv[3])
     listen_ip, listen_port = split_addr(sys.argv[4])
+    global peer_id
     peer_id = uuid4()
-    asyncio.run(run_client(mode, filename, tracker_ip,
-                tracker_port, listen_ip, listen_port))
+    await run_client(mode, filename, tracker_ip,
+                     tracker_port, listen_ip, listen_port)
+
+
+def tail(file_path, n):
+    with open(file_path, "r") as f:
+        lines = f.read().splitlines()
+    return "\n".join(lines[-n:])
+
+async def get_input():
+    return await asyncio.get_event_loop().run_in_executor(None, input, "> ")
+
+async def run_terminal():
+    while True:
+        command = await get_input()
+        command_args = list(map(str.lower, command.split()))
+        if command_args[0] == "tail":
+            try:
+                n = int(command_args[1])
+            except:
+                n = 50
+            print(tail(file_path="peer.log", n=n))
+        elif command_args[0] == "quit":
+            print("Do a ctrl-c to kill server!")
+            return
+        else:
+            pass
+
+async def main():
+    await asyncio.gather(run_peer(), run_terminal())
+
+if __name__ == "__main__":
+    asyncio.run(main())
