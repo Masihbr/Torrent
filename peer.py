@@ -143,7 +143,7 @@ async def download_file(peer: dict, filename: str) -> None:
     await writer.wait_closed()
 
 
-async def handle_file_share(reader, writer):
+async def handle_file_share(reader, writer, filename):
     logger.debug(f"\n---\n{peer_id} server started.\n---\n")
     try:
         data = await reader.read(PACKET_SIZE)
@@ -154,7 +154,13 @@ async def handle_file_share(reader, writer):
             f'Client connected from {peer_name[0]}:{peer_name[1]} message:{message}')
         await writer.drain()
         try:
-            with open(message.get("filename", ""), 'rb') as f:
+            requested_filename = message.get("filename", "")
+            if requested_filename != filename:
+                writer.write(
+                    serialize({"status": "bad", "message": f"wrong file requested from {peer_id}."}))
+                await writer.drain()
+                return
+            with open(filename, 'rb') as f:
                 contents = f.read()
                 writer.write(
                     serialize({"status": "ok", "contents": contents}))
@@ -201,7 +207,7 @@ async def get_file(filename, tracker_ip, tracker_port, peer_ip, peer_port):
 
 
 async def share_file(filename, tracker_ip, tracker_port, peer_ip, peer_port):
-    server = await asyncio.start_server(handle_file_share, host=peer_ip, port=peer_port)
+    server = await asyncio.start_server(lambda reader, writer: handle_file_share(reader, writer, filename), host=peer_ip, port=peer_port)
     async with server:
         await notify_tracker(filename, tracker_ip, tracker_port, peer_ip, peer_port)
         await server.serve_forever()
