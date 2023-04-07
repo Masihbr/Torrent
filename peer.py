@@ -12,7 +12,10 @@ logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 logger.propagate = False
 
+PACKET_SIZE = 1024
 peer_id = None
+PING_TIMEOUT = 1
+PING_INTERVAL = 5
 ARG_LEN = 5
 
 
@@ -94,12 +97,41 @@ class PeerGetProtocol(asyncio.DatagramProtocol):
         self.on_con_lost.set_result(True)
 
 
+class PeerPingProtocol(asyncio.DatagramProtocol):
+    def __init__(self, on_con_lost):
+        self.on_con_lost = on_con_lost
+        self.transport = None
+
+    def connection_made(self, transport):
+        self.transport = transport
+        message = serialize({"type": "ping", "peer_id": f"{peer_id}"})
+        logger.info(f"Send {message}")
+        self.transport.sendto(message)
+
+    def datagram_received(self, data, addr):
+        response = deserialize(data)
+        logger.info(f"Received {response} from {addr}")
+        if response["status"] == "ok":
+            logger.info("Pinged tracker successfully.")
+        else:
+            logger.error("Failed to ping tracker.")
+        logger.info("Close the socket")
+        self.transport.close()
+
+    def error_received(self, exc):
+        logger.error(f"Error received {exc}")
+
+    def connection_lost(self, exc):
+        logger.info('The server closed the connection')
+        self.on_con_lost.set_result(True)
+
+
 async def download_file(peer: dict, filename: str) -> None:
     reader, writer = await asyncio.open_connection(host=peer["peer_ip"], port=peer["peer_port"])
     payload = serialize({"filename": filename})
     logger.info(f"Send payload {payload}")
     writer.write(payload)
-    file_response = deserialize(await reader.read(1024))
+    file_response = deserialize(await reader.read(PACKET_SIZE))
     logger.info(f"file_response: {file_response}")
     if file_response["status"] == "ok":
         with open(f"{filename}", "wb") as file:
@@ -114,7 +146,7 @@ async def handle_file_share(reader, writer):
     logger.info(f"\n---\n{peer_id} server started.\n---\n")
     try:
         while True:
-            data = await reader.read(1024)
+            data = await reader.read(PACKET_SIZE)
             logger.info(f"received payload {data}")
             message = deserialize(data)
             peer_name = writer.get_extra_info('peername')
@@ -195,18 +227,8 @@ async def run_peer():
     listen_ip, listen_port = split_addr(sys.argv[4])
     global peer_id
     peer_id = uuid4()
-    await run_client(mode, filename, tracker_ip,
-                     tracker_port, listen_ip, listen_port)
-
-
-def tail(file_path, n):
-    with open(file_path, "r") as f:
-        lines = f.read().splitlines()
-    return "\n".join(lines[-n:])
-
-
-async def get_input():
-    return await asyncio.get_event_loop().run_in_executor(None, input, "> ")
+    await asyncio.gather(run_client(mode, filename, tracker_ip,
+                                    tracker_port, listen_ip, listen_port), ping_pong(tracker_ip, tracker_port))
 
 
 async def run_terminal():
@@ -222,14 +244,29 @@ async def run_terminal():
                 n = 50
             print(tail(file_path="peer.log", n=n))
         elif command_args[0] == "quit":
-            print("Do a ctrl-c to kill server!")
+            for task in asyncio.all_tasks():
+                task.cancel()
             return
-        else:
-            pass
+
+
+async def ping_pong(tracker_ip, tracker_port):
+    while True:
+        on_con_lost = asyncio.get_running_loop().create_future()
+        transport, protocol = await asyncio.get_event_loop().create_datagram_endpoint(
+            lambda: PeerPingProtocol(on_con_lost=on_con_lost),
+            remote_addr=(tracker_ip, tracker_port))
+        try:
+            await on_con_lost
+        finally:
+            transport.close()
+        await asyncio.sleep(PING_INTERVAL)
 
 
 async def main():
     await asyncio.gather(run_peer(), run_terminal())
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except asyncio.exceptions.CancelledError:
+        print("Bye!")

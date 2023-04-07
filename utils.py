@@ -2,6 +2,37 @@ import ipaddress
 import json
 from typing import Tuple
 import asyncio
+import time
+
+
+class ExpiringSet(set):
+    def __init__(self):
+        self.expiry_times = {}
+
+    def add(self, value, timeout=10):
+        super().add(value)
+        self.expiry_times[value] = time.time() + timeout
+
+    def remove_expired(self):
+        now = time.time()
+        expired_values = [
+            value for value, expiry_time in self.expiry_times.items() if now >= expiry_time]
+        for value in expired_values:
+            super().remove(value)
+            del self.expiry_times[value]
+
+    def __iter__(self):
+        self.remove_expired()
+        return super().__iter__()
+
+    def __contains__(self, value):
+        self.remove_expired()
+        return super().__contains__(value)
+
+    def __len__(self):
+        self.remove_expired()
+        return super().__len__()
+
 
 def validate_addr(ip: str, port: str) -> None:
     ipaddress.ip_address(ip)

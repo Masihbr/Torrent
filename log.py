@@ -14,5 +14,5 @@ def configure_logging(log_file):
     # Create and configure loggers
     logging.basicConfig(
         level=logging.DEBUG,
-        handlers=[console_handler, file_handler],
+        handlers=[file_handler],
     )
