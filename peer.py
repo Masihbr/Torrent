@@ -15,7 +15,7 @@ logger.propagate = False
 PACKET_SIZE = 1024
 peer_id = None
 PING_TIMEOUT = 1
-PING_INTERVAL = 5
+PING_INTERVAL = 10
 ARG_LEN = 5
 
 
@@ -36,24 +36,24 @@ class PeerShareProtocol(asyncio.DatagramProtocol):
             "peer_ip": f"{self.peer_ip}",
             "peer_port": f"{self.peer_port}"
         }
-        logger.info(f"Send {message}")
+        logger.debug(f"PeerShareProtocol message {message}")
         self.transport.sendto(serialize(message))
 
     def datagram_received(self, data, addr):
         response = deserialize(data)
-        logger.info(f"Received {response} from {addr}")
+        logger.debug(f"PeerShareProtocol response on Share {response} from {addr}")
         if response["status"] == "ok":
-            logger.info(f"{peer_id} shared {self.filename} successfully")
+            logger.debug(f"{peer_id} shared {self.filename} successfully")
         else:
             logger.error(response)
-        logger.info("Close the socket")
+        logger.debug("PeerShareProtocol closed the socket")
         self.transport.close()
 
     def error_received(self, exc):
-        logger.error(f"Error received {exc}")
+        logger.error(f"PeerShareProtocol received error {exc}")
 
     def connection_lost(self, exc):
-        logger.info('The server closed the connection')
+        logger.debug('PeerShareProtocol closed the connection')
         self.on_con_lost.set_result(True)
 
 
@@ -75,25 +75,25 @@ class PeerGetProtocol(asyncio.DatagramProtocol):
             "peer_ip": f"{self.peer_ip}",
             "peer_port": f"{self.peer_port}"
         }
-        logger.info(f"Send {message}")
+        logger.debug(f"PeerGetProtocol message {message}")
         self.transport.sendto(serialize(message))
 
     def datagram_received(self, data, addr):
         response = deserialize(data)
-        logger.info(f"Received {response} from {addr}")
+        logger.debug(f"PeerGetProtocol response {response} from {addr}")
         if response["status"] == "ok":
             peer = random.choice(response["peers"])
             self.chosen_peer = peer
         else:
             logger.error(response)
-        logger.info("Close the socket")
+        logger.debug("PeerGetProtocol closed the socket")
         self.transport.close()
 
     def error_received(self, exc):
         logger.error(f"Error received {exc}")
 
     def connection_lost(self, exc):
-        logger.info('The server closed the connection')
+        logger.debug('PeerGetProtocol closed the connection')
         self.on_con_lost.set_result(True)
 
 
@@ -105,66 +105,66 @@ class PeerPingProtocol(asyncio.DatagramProtocol):
     def connection_made(self, transport):
         self.transport = transport
         message = serialize({"type": "ping", "peer_id": f"{peer_id}"})
-        logger.info(f"Send {message}")
+        logger.info(f"PeerPingProtocol message {message}")
         self.transport.sendto(message)
 
     def datagram_received(self, data, addr):
         response = deserialize(data)
-        logger.info(f"Received {response} from {addr}")
+        logger.info(f"PeerPingProtocol response {response} from {addr}")
         if response["status"] == "ok":
             logger.info("Pinged tracker successfully.")
         else:
             logger.error("Failed to ping tracker.")
-        logger.info("Close the socket")
+        logger.info("Close the Ping socket")
         self.transport.close()
 
     def error_received(self, exc):
-        logger.error(f"Error received {exc}")
+        logger.error(f"PeerPingProtocol received error {exc}")
 
     def connection_lost(self, exc):
-        logger.info('The server closed the connection')
+        logger.info('PeerPingProtocol closed the connection')
         self.on_con_lost.set_result(True)
 
 
 async def download_file(peer: dict, filename: str) -> None:
     reader, writer = await asyncio.open_connection(host=peer["peer_ip"], port=peer["peer_port"])
-    payload = serialize({"filename": filename})
-    logger.info(f"Send payload {payload}")
+    payload = serialize({"filename": filename, "peer_id": f"{peer_id}"})
+    logger.debug(f"download_file payload {payload}")
     writer.write(payload)
+    await writer.drain()
     file_response = deserialize(await reader.read(PACKET_SIZE))
-    logger.info(f"file_response: {file_response}")
+    logger.debug(f"download_file response {file_response}")
     if file_response["status"] == "ok":
         with open(f"{filename}", "wb") as file:
             file.write(file_response["contents"])
     else:
-        logger.error(f"file not found.")
+        logger.error(f"download_file err file not found.")
     writer.close()
     await writer.wait_closed()
 
 
 async def handle_file_share(reader, writer):
-    logger.info(f"\n---\n{peer_id} server started.\n---\n")
+    logger.debug(f"\n---\n{peer_id} server started.\n---\n")
     try:
-        while True:
-            data = await reader.read(PACKET_SIZE)
-            logger.info(f"received payload {data}")
-            message = deserialize(data)
-            peer_name = writer.get_extra_info('peername')
-            logger.info(
-                f'Client connected from {peer_name[0]}:{peer_name[1]} message:{message}')
-            await writer.drain()
-            try:
-                with open(message["filename"], 'rb') as f:
-                    contents = f.read()
-                    writer.write(
-                        serialize({"status": "ok", "contents": contents}))
-                    await writer.drain()
-            except FileNotFoundError:
+        data = await reader.read(PACKET_SIZE)
+        logger.debug(f"handle_file_share received payload {data}")
+        message = deserialize(data)
+        peer_name = writer.get_extra_info('peername')
+        logger.debug(
+            f'Client connected from {peer_name[0]}:{peer_name[1]} message:{message}')
+        await writer.drain()
+        try:
+            with open(message.get("filename", ""), 'rb') as f:
+                contents = f.read()
                 writer.write(
-                    serialize({"status": "bad", "message": "file not found."}))
+                    serialize({"status": "ok", "contents": contents}))
                 await writer.drain()
+        except FileNotFoundError:
+            writer.write(
+                serialize({"status": "bad", "message": f"file not found on peer {peer_id}."}))
+            await writer.drain()
     except Exception as e:
-        logger.error(f"Close the connection {e}")
+        logger.error(f"handle_file_share closed the connection {e}")
         writer.close()
         await writer.wait_closed()
 
@@ -180,7 +180,7 @@ async def notify_tracker(filename, tracker_ip, tracker_port, peer_ip, peer_port)
         await on_con_lost
     finally:
         transport.close()
-    logger.info(f"{peer_id} shared {filename}")
+    logger.debug(f"{peer_id} notified tracker {tracker_ip}:{tracker_port} to share file {filename}")
 
 
 async def get_file(filename, tracker_ip, tracker_port, peer_ip, peer_port):
@@ -197,7 +197,7 @@ async def get_file(filename, tracker_ip, tracker_port, peer_ip, peer_port):
         if peer:
             await download_file(peer, filename)
         transport.close()
-    logger.info(f"{peer_id} got {filename}")
+    logger.debug(f"{peer_id} got {filename} from {peer}")
 
 
 async def share_file(filename, tracker_ip, tracker_port, peer_ip, peer_port):
@@ -220,8 +220,8 @@ async def run_peer():
         raise ValueError("Error in arguments.")
     mode = sys.argv[1].lower()
     if mode not in {"share", "get"}:
-        logger.error(f"Unknown Mode {mode}.")
-        raise ValueError(f"Unknown Mode {mode}.")
+        logger.error(f"Unknown mode {mode}.")
+        raise ValueError(f"Unknown mode {mode}.")
     filename = sys.argv[2]
     tracker_ip, tracker_port = split_addr(sys.argv[3])
     listen_ip, listen_port = split_addr(sys.argv[4])

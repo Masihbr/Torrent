@@ -11,7 +11,7 @@ logger.setLevel(logging.DEBUG)
 logger.propagate = False
 
 ARG_LEN = 2
-PEER_TTL = 10
+PEER_TTL = 15
 
 
 class TrackerUDPServer(asyncio.DatagramProtocol):
@@ -25,7 +25,7 @@ class TrackerUDPServer(asyncio.DatagramProtocol):
 
     def datagram_received(self, data, addr):
         message = deserialize(data)
-        logger.info(f"got {message} from {addr}")
+        logger.info(f"TrackerUDPServer got {message} from {addr}")
         if message["type"] == "share":
             self.handle_share(addr, message)
         elif message["type"] == "get":
@@ -35,8 +35,7 @@ class TrackerUDPServer(asyncio.DatagramProtocol):
 
     def handle_get(self, addr, message):
         self.update_peers()
-        filename, peer_id, peer_ip, peer_port = message["filename"], message[
-            "peer_id"], message["peer_ip"], message["peer_port"]
+        filename, peer_id = message["filename"], message["peer_id"]
         peers = self.files.get(filename)
         if peers:
             response = serialize({"status": "ok",
@@ -44,7 +43,7 @@ class TrackerUDPServer(asyncio.DatagramProtocol):
                                   "n": len(peers),
                                   "peers": peers})
             self.transport.sendto(response, addr=addr)
-            logging.info(f"{peer_id} requested {filename}, sent to {addr}")
+            logging.debug(f"{peer_id} requested {filename}, {peers} was sent to {addr}")
         else:
             self.transport.sendto(
                 serialize({"status": "bad", "message": "file not found."}))
@@ -62,8 +61,8 @@ class TrackerUDPServer(asyncio.DatagramProtocol):
         })
         self.peers[peer_id].add(filename)
         self.alive_peers.add(peer_id, timeout=PEER_TTL)
-        logger.info(f"{peer_id} shared {filename}")
-        logger.info(
+        logger.debug(f"{peer_id} shared {filename}")
+        logger.debug(
             f"\n---\nfiles:{self.files}\npeers:{self.peers}\n---\n")
         self.transport.sendto(serialize({"status": "ok"}), addr)
 
@@ -86,7 +85,8 @@ class TrackerUDPServer(asyncio.DatagramProtocol):
             del self.peers[key]
 
     def connection_lost(self, exc) -> None:
-        logger.error(f"Connection lost {exc}")
+        logger.error(
+            f"TrackerUDPServer Connection lost {exc or 'without exception.'}")
 
 
 async def run_server(ip: str, port: str):
@@ -95,7 +95,7 @@ async def run_server(ip: str, port: str):
         lambda: TrackerUDPServer(),
         local_addr=(ip, port)
     )
-    logger.info(f"Listening on {ip}:{port}")
+    logger.debug(f"Tracker Server Listening on {ip}:{port}")
     try:
         await run_terminal(protocol)  # run until quit
     finally:

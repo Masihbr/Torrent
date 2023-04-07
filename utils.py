@@ -68,12 +68,15 @@ def serialize(data: dict) -> bytes:
 
 
 def deserialize(data: bytes) -> dict:
-    return json.loads(data.decode(), cls=BinaryJSONDecoder)
-
+    try:
+        return json.loads(data.decode(), cls=BinaryJSONDecoder)
+    except Exception as e:
+        return {"err": True, "message": f"Error in deserialization: {e}"}
 
 def tail(file_path, n):
     with open(file_path, "r") as f:
         lines = f.read().splitlines()
+        lines = list(filter(lambda x: "- root - INFO -" not in x, lines))
     return "\n".join(lines[-n:])
 
 
