@@ -80,5 +80,5 @@ def tail(file_path, n):
     return "\n".join(lines[-n:])
 
 
-async def get_input():
-    return await asyncio.get_event_loop().run_in_executor(None, input, "> ")
+async def get_input(input_str: str = "> "):
+    return await asyncio.get_event_loop().run_in_executor(None, input, input_str)
