@@ -13,6 +13,7 @@ logger.setLevel(logging.DEBUG)
 logger.propagate = False
 
 PACKET_SIZE = 1024
+BUFFER_SIZE = 512
 peer_id = None
 PING_TIMEOUT = 1
 PING_INTERVAL = 10
@@ -41,7 +42,8 @@ class PeerShareProtocol(asyncio.DatagramProtocol):
 
     def datagram_received(self, data, addr):
         response = deserialize(data)
-        logger.debug(f"PeerShareProtocol response on Share {response} from {addr}")
+        logger.debug(
+            f"PeerShareProtocol response on Share {response} from {addr}")
         if response["status"] == "ok":
             logger.debug(f"{peer_id} shared {self.filename} successfully")
         else:
@@ -132,13 +134,15 @@ async def download_file(peer: dict, filename: str) -> None:
     logger.debug(f"download_file payload {payload}")
     writer.write(payload)
     await writer.drain()
-    file_response = deserialize(await reader.read(PACKET_SIZE))
-    logger.debug(f"download_file response {file_response}")
-    if file_response["status"] == "ok":
-        with open(f"{filename}", "wb") as file:
-            file.write(file_response["contents"])
-    else:
-        logger.error(f"download_file err file not found.")
+    break_out = False
+    while True:
+        chunk = await reader.read(PACKET_SIZE)
+        logger.debug(f"download_file raw data len:{len(chunk)}")
+        if not chunk:
+            break
+        with open(f"{filename}", mode="ab") as file:
+            file.write(chunk)
+    logger.debug(f"download_file from {peer} finished.")
     writer.close()
     await writer.wait_closed()
 
@@ -160,17 +164,20 @@ async def handle_file_share(reader, writer, filename):
                     serialize({"status": "bad", "message": f"wrong file requested from {peer_id}."}))
                 await writer.drain()
                 return
-            with open(filename, 'rb') as f:
-                contents = f.read()
-                writer.write(
-                    serialize({"status": "ok", "contents": contents}))
-                await writer.drain()
+            chunk_count = get_chunk_count(filename, buffer_size=BUFFER_SIZE)
+            for chunk, index in read_binary_file_with_buffer(filename, buffer_size=BUFFER_SIZE):
+                logger.debug(
+                    f"handle_file_share sending to {peer_name} chunk {index} of {chunk_count}, chunk={len(chunk)}")
+                writer.write(chunk)
+            await writer.drain()
         except FileNotFoundError:
             writer.write(
                 serialize({"status": "bad", "message": f"file not found on peer {peer_id}."}))
             await writer.drain()
+        logger.debug(f"handle_file_share sending to {peer_name} finished!")
     except Exception as e:
         logger.error(f"handle_file_share closed the connection {e}")
+    finally:
         writer.close()
         await writer.wait_closed()
 
@@ -186,7 +193,8 @@ async def notify_tracker(filename, tracker_ip, tracker_port, peer_ip, peer_port)
         await on_con_lost
     finally:
         transport.close()
-    logger.debug(f"{peer_id} notified tracker {tracker_ip}:{tracker_port} to share file {filename}")
+    logger.debug(
+        f"{peer_id} notified tracker {tracker_ip}:{tracker_port} to share file {filename}")
 
 
 async def get_file(filename, tracker_ip, tracker_port, peer_ip, peer_port):
